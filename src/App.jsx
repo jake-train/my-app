@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -45,13 +45,76 @@ const images = {
 function App() {
   const [instruments, setInstruments] = useState([])
 
+  const [session, setSession] = useState(null)
+  const [authMode, setAuthMode] = useState('signup') // 'signup' | 'login'
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [authError, setAuthError] = useState(null)
+  const [authLoading, setAuthLoading] = useState(false)
+
+  const isLoggedIn = useMemo(() => Boolean(session?.user), [session])
+
   useEffect(() => {
-    getInstruments()
+    let mounted = true
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted) return
+      if (error) {
+        // keep UI in logged-out state; surface message on the form
+        setAuthError(error.message)
+        setSession(null)
+        return
+      }
+      setSession(data.session ?? null)
+    })
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession ?? null)
+      setAuthError(null)
+    })
+
+    return () => {
+      mounted = false
+      sub?.subscription?.unsubscribe?.()
+    }
   }, [])
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      getInstruments()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn])
 
   async function getInstruments() {
     const { data } = await supabase.from('instruments').select()
     setInstruments(data)
+  }
+
+  async function onSubmitAuth(e) {
+    e.preventDefault()
+    setAuthError(null)
+    setAuthLoading(true)
+
+    try {
+      if (authMode === 'signup') {
+        const { error } = await supabase.auth.signUp({ email, password })
+        if (error) throw error
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+      }
+    } catch (err) {
+      setAuthError(err?.message ?? 'Authentication failed')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  async function onLogout() {
+    setAuthError(null)
+    const { error } = await supabase.auth.signOut()
+    if (error) setAuthError(error.message)
   }
 
   return (
@@ -63,84 +126,219 @@ function App() {
         fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial'
       }}
     >
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '56px 20px' }}>
-        <header style={{ textAlign: 'left', marginBottom: 22 }}>
-          <h1 style={{ margin: 0, fontSize: 34, letterSpacing: '-0.02em' }}>String Instruments</h1>
-          <p style={{ margin: '10px 0 0', color: 'rgba(255,255,255,0.7)', lineHeight: 1.5 }}>
-            A quick gallery from your Supabase table, presented as responsive cards.
-          </p>
-        </header>
+      {isLoggedIn ? (
+        <div style={{ maxWidth: 1100, margin: '0 auto', padding: '56px 20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+            <button
+              onClick={onLogout}
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                color: 'rgba(255,255,255,0.88)',
+                padding: '10px 12px',
+                borderRadius: 12,
+                cursor: 'pointer'
+              }}
+            >
+              Log out
+            </button>
+          </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-            gap: 16
-          }}
-        >
-          {instruments.map((instrument) => {
-            const key = String(instrument.name || '').toLowerCase()
-            const src = images[key] ?? images.cello
+          <header style={{ textAlign: 'left', marginBottom: 22 }}>
+            <h1 style={{ margin: 0, fontSize: 34, letterSpacing: '-0.02em' }}>String Instruments</h1>
+            <p style={{ margin: '10px 0 0', color: 'rgba(255,255,255,0.7)', lineHeight: 1.5 }}>
+              A quick gallery from your Supabase table, presented as responsive cards.
+            </p>
+          </header>
 
-            return (
-              <div
-                key={instrument.id}
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.10)',
-                  borderRadius: 16,
-                  overflow: 'hidden',
-                  boxShadow: '0 10px 30px rgba(0,0,0,0.35)'
-                }}
-              >
-                <div style={{ padding: 12 }}>
-                  <div
-                    style={{
-                      borderRadius: 12,
-                      overflow: 'hidden',
-                      background: 'rgba(255,255,255,0.04)'
-                    }}
-                  >
-                    <img
-                      src={src}
-                      alt={instrument.name}
-                      loading="lazy"
-                      style={{ width: '100%', height: 170, objectFit: 'cover', display: 'block' }}
-                      onError={(e) => {
-                        e.currentTarget.onerror = null
-                        e.currentTarget.src = images.cello
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: 16
+            }}
+          >
+            {instruments.map((instrument) => {
+              const key = String(instrument.name || '').toLowerCase()
+              const src = images[key] ?? images.cello
+
+              return (
+                <div
+                  key={instrument.id}
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.10)',
+                    borderRadius: 16,
+                    overflow: 'hidden',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.35)'
+                  }}
+                >
+                  <div style={{ padding: 12 }}>
+                    <div
+                      style={{
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                        background: 'rgba(255,255,255,0.04)'
                       }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-                    <div style={{ marginTop: 12, fontSize: 18, fontWeight: 700 }}>
-                      {instrument.name}
+                    >
+                      <img
+                        src={src}
+                        alt={instrument.name}
+                        loading="lazy"
+                        style={{ width: '100%', height: 170, objectFit: 'cover', display: 'block' }}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null
+                          e.currentTarget.src = images.cello
+                        }}
+                      />
                     </div>
-                    <div style={{ marginTop: 12, fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
-                      #{instrument.id}
+
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                      <div style={{ marginTop: 12, fontSize: 18, fontWeight: 700 }}>
+                        {instrument.name}
+                      </div>
+                      <div style={{ marginTop: 12, fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+                        #{instrument.id}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
 
-        {instruments.length === 0 ? (
+          {instruments.length === 0 ? (
+            <div
+              style={{
+                marginTop: 18,
+                padding: 16,
+                borderRadius: 12,
+                border: '1px dashed rgba(255,255,255,0.18)',
+                color: 'rgba(255,255,255,0.7)'
+              }}
+            >
+              No instruments yet. Add rows to your `instruments` table to see cards here.
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div
+          style={{
+            minHeight: '100vh',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 20
+          }}
+        >
           <div
             style={{
-              marginTop: 18,
-              padding: 16,
-              borderRadius: 12,
-              border: '1px dashed rgba(255,255,255,0.18)',
-              color: 'rgba(255,255,255,0.7)'
+              width: '100%',
+              maxWidth: 420,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.10)',
+              borderRadius: 16,
+              overflow: 'hidden',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.35)'
             }}
           >
-            No instruments yet. Add rows to your `instruments` table to see cards here.
+            <div style={{ padding: 18 }}>
+              <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>
+                {authMode === 'signup' ? 'Sign Up' : 'Log in'}
+              </div>
+              <div style={{ marginTop: 8, color: 'rgba(255,255,255,0.7)', lineHeight: 1.5 }}>
+                {authMode === 'signup'
+                  ? 'Create an account to view the instruments.'
+                  : 'Welcome back — log in to view the instruments.'}
+              </div>
+
+              <form onSubmit={onSubmitAuth} style={{ marginTop: 16, display: 'grid', gap: 12 }}>
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Email</div>
+                  <input
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    type="email"
+                    autoComplete="email"
+                    required
+                    placeholder="you@example.com"
+                    style={{
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'rgba(255,255,255,0.92)',
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      outline: 'none'
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Password</div>
+                  <input
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    type="password"
+                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                    required
+                    placeholder="••••••••"
+                    style={{
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'rgba(255,255,255,0.92)',
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      outline: 'none'
+                    }}
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  style={{
+                    marginTop: 4,
+                    background: 'rgba(255,255,255,0.10)',
+                    border: '1px solid rgba(255,255,255,0.16)',
+                    color: 'rgba(255,255,255,0.92)',
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    cursor: authLoading ? 'not-allowed' : 'pointer',
+                    fontWeight: 700
+                  }}
+                >
+                  {authLoading ? 'Please wait…' : authMode === 'signup' ? 'Sign Up' : 'Log in'}
+                </button>
+
+                {authError ? (
+                  <div style={{ marginTop: 6, color: 'rgba(248,113,113,0.95)', fontSize: 13, lineHeight: 1.4 }}>
+                    {authError}
+                  </div>
+                ) : null}
+              </form>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthError(null)
+                  setAuthMode((m) => (m === 'signup' ? 'login' : 'signup'))
+                }}
+                style={{
+                  marginTop: 14,
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  color: 'rgba(255,255,255,0.75)',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 3
+                }}
+              >
+                {authMode === 'signup' ? 'Already have an account? Log in' : "Don't have an account? Sign up"}
+              </button>
+            </div>
           </div>
-        ) : null}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
